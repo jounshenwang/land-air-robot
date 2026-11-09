@@ -8,7 +8,7 @@
   <img src="assets/robotSim.jpg" alt="仿真" width="48%">
   <img src="assets/robotReal.jpg" alt="实物" width="48%">
 </p>
-https://github.com/user-attachments/assets/b95def22-a981-422c-b06c-d204810841ea
+机器人效果视频：https://github.com/user-attachments/assets/b95def22-a981-422c-b06c-d204810841ea
 
 当前仓库提供 **ESP32-S3 底盘固件、ROS 2 地面建图与导航工作空间、SolidWorks 模型和 PX4 版本说明**。底盘固件包含遥控、坡度补偿、弓字形清扫和 UART 通信。双光热斑检测在仓库中有[设计流程图](底盘控制代码/docs/光伏热斑检测系统流程图.md)。3D A* 空中规划、双光检测节点、ROS 2 底盘串口桥和自主变构执行程序均未随当前目录发布。
 
