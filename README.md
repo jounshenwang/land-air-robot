@@ -10,7 +10,7 @@
 </p>
 机器人效果视频：https://github.com/user-attachments/assets/b95def22-a981-422c-b06c-d204810841ea
 
-当前仓库提供 **ESP32-S3 底盘固件、ROS 2 地面建图与导航工作空间、SolidWorks 模型和 PX4 版本说明**。底盘固件包含遥控、坡度补偿、弓字形清扫和 UART 通信。双光热斑检测在仓库中有[设计流程图](底盘控制代码/docs/光伏热斑检测系统流程图.md)。3D A* 空中规划、双光检测节点、ROS 2 底盘串口桥和自主变构执行程序均未随当前目录发布。
+当前仓库提供 **ESP32-S3 底盘固件、ROS 2 地面导航、FAST-LIO2 三维点云建图、红外与可见光双路巡检、SolidWorks 模型和 PX4 版本说明**。底盘支持遥控、坡度补偿、弓字形清扫和 UART 通信。巡检程序可录制双路视频，并在温度达到阈值时保存告警照片。
 
 ## 目录
 
@@ -18,6 +18,8 @@
 | --- | --- |
 | [`底盘控制代码/`](底盘控制代码/) | PlatformIO 固件、引脚配置、串口协议和控制架构 |
 | [`上位机代码/Lidar_nav2_ws/`](上位机代码/Lidar_nav2_ws/) | ROS 2 工作空间，含 Livox 驱动、LIO、点云重定位、Nav2 配置、示例地图和 Gazebo Classic 仿真 |
+| [`FAST_LIO2_source/`](FAST_LIO2_source/) | 独立 ROS 2 `fast_lio` 包，含 MID-360 实机配置、RViz 配置和 PCD 地图保存功能 |
+| [`thermal-monitoring/`](thermal-monitoring/) | C 语言红外 UVC 采集程序和 Python 双光监控、录制与告警脚本 |
 | [`模型/`](模型/) | SolidWorks 总装、清洁滚筒、机臂、舵机支架及其他零件模型 |
 | [`px4/`](px4/) | PX4 固件版本记录，实际固件按飞控型号从上游获取 |
 
@@ -27,20 +29,21 @@
 
 | 模块 | 硬件 | 用途 |
 | --- | --- | --- |
-| 机载计算 | NVIDIA Jetson 系列上位机。底盘文档和串口注释以 Orin Nano 为接线参考 | 运行 ROS 2、雷达驱动、建图和导航 |
+| 机载计算 | NVIDIA Jetson 系列上位机。底盘文档和串口注释以 Orin Nano 为接线参考 | 运行 ROS 2、雷达驱动、建图、导航和双光巡检 |
 | 地面控制 | ESP32-S3，PlatformIO 板卡目标为 `esp32-s3-devkitm-1` | 50 Hz 控制循环、编码器采样、坡度前馈、遥控和急停 |
 | 底盘与清洁 | 4 路直流减速电机、TB6612 电机驱动、左右霍尔编码器、MPU6050、滚筒电机 | 四轮差速行走、姿态检测和光伏板清洁 |
 | 激光雷达 | Livox MID-360 | 通过以太网向上位机提供点云和雷达内置 IMU 数据 |
 | 飞行与变构 | Pixhawk 系列飞控、PX4 v1.16.0、无刷电机、电调、螺旋桨、变构舵机、遥控器及接收机 | 飞行控制和构型切换 |
-| 巡检载荷 | 可见光相机、红外热像仪 | 光伏组件热斑巡检 |
+| 巡检载荷 | 海康 UVC 测温热像仪（256×192）、IMX462 可见光相机 | 光伏组件测温告警和双路影像记录 |
 
-在 SolidWorks 中打开 [`陆空两栖光伏清洁巡检机器人.SLDASM`](模型/陆空两栖光伏清洁巡检机器人.SLDASM) 查看总装，保留同目录下的零件文件以解析装配引用。飞控具体板型、舵机和电调通道、双光相机实机接口及完整配电线束未在仓库中定版，装配时需按实物和设备手册核对。
+在 SolidWorks 中打开 [`陆空两栖光伏清洁巡检机器人.SLDASM`](模型/陆空两栖光伏清洁巡检机器人.SLDASM) 查看总装，保留同目录下的零件文件以解析装配引用。飞控板型、舵机和电调通道及配电线束按实际装机配置核对。
 
 ### 系统连线
 
 | 链路 | 接线与配置 |
 | --- | --- |
 | MID-360 ↔ Jetson | 通过雷达转接线将以太网接到 Jetson 网口，雷达按手册供电。仓库示例为主机 `192.168.1.50`、雷达 `192.168.1.162`，按实机修改 [`MID360_config.json`](上位机代码/Lidar_nav2_ws/src/livox_ros_driver2/config/MID360_config.json)。[Livox MID-360 手册](https://www.livoxtech.com/mid-360/downloads) |
+| 双光相机 ↔ Jetson | 热像仪通过 USB 接入，采集程序匹配设备 ID `2bdf:0102`。原型机的 IMX462 也通过 USB 接入，在 Orin Nano 上枚举为 `USB FHD Camera`（示例为 `/dev/video2`）。程序也支持通过 Jetson CSI 接入的可见光相机。[相机接入说明](thermal-monitoring/readme.txt) |
 | Jetson ↔ ESP32-S3 | UART1，`921600`、8N1。Jetson TX → ESP32 GPIO44，Jetson RX ← ESP32 GPIO43，GND 共地。固件注释中的 Orin Nano 排针参考为 TX Pin 8、RX Pin 10，按实物板型核对。串口连接使用 TX、RX 和 GND，两端独立供电。 |
 | ESP32-S3 ↔ Pixhawk | 预留 UART2 ↔ TELEM2，MAVLink 2，ESP32 配置 `57600`、8N1。ESP32 GPIO38（TX）→ 飞控 RX，ESP32 GPIO39（RX）← 飞控 TX，GND 共地。先处理下方的 GPIO39 冲突，再按飞控板型核对信号定义，仅连接 TX、RX 和 GND，并将飞控对应串口波特率设为 `57600`。[PX4 MAVLink 串口配置](https://docs.px4.io/v1.16/en/peripherals/mavlink_peripherals) |
 | 接收机 → ESP32-S3 | PWM 输出 CH1/CH2/CH9/CH10 → GPIO14/13/12/11。CH1 转向，CH2 前后，CH9 选择陆空模式，CH10 控制滚筒并可在摇杆回中时触发清扫。接收机与 ESP32 共地，接线前核对信号电平。 |
@@ -151,11 +154,70 @@ ros2 topic echo /cmd_vel
 
 更多参数与故障排查见[导航工作空间 README](上位机代码/Lidar_nav2_ws/README.md)。
 
-### 5. PX4 与巡检
+### 5. 独立运行 FAST-LIO2 三维建图
+
+只需要 MID-360 里程计和三维 PCD 地图时，可单独构建 [`FAST_LIO2_source/`](FAST_LIO2_source/)。它与 `Lidar_nav2_ws` 内的 FAST-LIO 都声明为 `fast_lio`，请在独立构建目录中选用这一份。完整地面导航仍使用上一节的 `Lidar_nav2_ws`。
+
+在 Ubuntu 22.04 / ROS 2 Humble 环境中，从仓库根目录运行以下命令。构建依赖包括 CMake、C++ 编译器、Python 开发库、PCL、Eigen 和 Livox ROS Driver 2。驱动源码和对应架构的 SDK 库位于导航工作空间中。首次使用 rosdep 时，安装后先执行 `sudo rosdep init` 和 `rosdep update`。
+
+```bash
+repo_root="$(pwd)"
+fast_lio_src="$repo_root/FAST_LIO2_source"
+livox_src="$repo_root/上位机代码/Lidar_nav2_ws/src/livox_ros_driver2"
+source /opt/ros/humble/setup.bash
+sudo apt install -y build-essential cmake python3-dev libeigen3-dev libpcl-dev \
+  python3-colcon-common-extensions python3-rosdep ros-humble-rviz2
+mkdir -p "$HOME/fast_lio2_ws"
+cd "$HOME/fast_lio2_ws"
+rosdep install --from-paths "$fast_lio_src" "$livox_src" --ignore-src --rosdistro humble -r -y
+colcon build --base-paths "$fast_lio_src" "$livox_src" --symlink-install
+```
+
+配置 MID-360 与上位机网口 IP 后，在两个终端分别执行 `source "$HOME/fast_lio2_ws/install/setup.bash"`，再依次启动驱动和建图：
+
+```bash
+# 终端一：发布 /livox/lidar（PointCloud2）和 /livox/imu
+ros2 launch livox_ros_driver2 fast_lio_msg_MID360_launch.py
+
+# 终端二：使用独立版的实机参数并打开 RViz
+ros2 launch fast_lio mapping.launch.py config_file:=mid360.yaml
+```
+
+独立版 [`mid360.yaml`](FAST_LIO2_source/config/mid360.yaml) 默认用 `lidar_type: 4` 订阅 MID-360 的 `PointCloud2`。建图时可在 RViz 查看 `/cloud_registered`、`/Laser_map` 和 `/path`，里程计通过 `/Odometry` 发布。点云积累后，在已加载工作空间的终端调用 `ros2 service call /map_save std_srvs/srv/Trigger "{}"`，输出路径由 `map_file_path` 指定（默认 `./test.pcd`，相对于建图进程的工作目录）。使用默认配置并正常结束建图后，累积扫描也会写入 `FAST_LIO2_source/PCD/scans.pcd`。[FAST-LIO2 使用说明](FAST_LIO2_source/README.md)
+
+### 6. 双光热斑检测与录制
+
+在 Jetson Orin Nano 的 Ubuntu / JetPack 环境中运行。`make` 将 C 采集程序编译为 `uvc_demo`，`img.py` 通过它读取热像仪的温度矩阵和图像，再用 OpenCV 采集 IMX462 画面。USB 可见光相机使用 V4L2，CSI 接入时需要支持 GStreamer 的 OpenCV 和 JetPack 相机插件。以下命令从仓库根目录执行：
+
+```bash
+cd thermal-monitoring
+sudo apt update
+sudo apt install -y build-essential cmake git libusb-1.0-0-dev libjpeg-dev \
+  usbutils v4l-utils python3-opencv python3-numpy
+git clone https://github.com/libuvc/libuvc.git libuvc
+cmake -S libuvc -B libuvc/build
+cmake --build libuvc/build -j
+sudo cmake --install libuvc/build
+sudo ldconfig
+make
+python3 img.py
+```
+
+`uvc_camera.c` 使用 libuvc 的内部头文件，按上述目录布局保留 `libuvc/` 源码和构建目录。启动时按提示完成 `sudo` 验证，供 `uvc_demo` 访问热像仪。SciPy 为可选依赖，安装后使用中值滤波，缺省时使用 OpenCV 均值滤波。
+
+| 用途 | 命令或输出 |
+| --- | --- |
+| 手动选择可见光相机 | `python3 img.py --v4l2-device /dev/video2`。设备编号可用 `v4l2-ctl --list-devices` 确认。 |
+| CSI 参数 | USB/V4L2 探测失败时尝试 CSI，可用 `python3 img.py --sensor-id 0 --csi-width 1280 --csi-height 720 --csi-fps 60` 指定参数。 |
+| 无显示器运行 | `python3 img.py --no-display`，按 `Ctrl+C` 结束录制。 |
+| 双路视频 | 默认保存到 `recordings/`，文件名为 `thermal_*.mp4` 和 `csi_*.mp4`。 |
+| 温度告警 | 滤波后的最高温度达到 `40 °C` 时，默认在 `captured_images/` 保存红外图和当时可用的可见光图。可用 `--alarm-threshold` 调整阈值。 |
+
+巡检和建图分别启动。告警照片按系统时间命名，可见光照片使用触发时读取的画面。[相机运行说明](thermal-monitoring/readme.txt) · [热斑检测设计流程](底盘控制代码/docs/光伏热斑检测系统流程图.md)
+
+### 7. PX4 飞控
 
 在 QGroundControl 中按实际 Pixhawk 板型安装或加载 PX4 v1.16.0，校准传感器及遥控器，核对输出映射。ESP32 固件的 MAVLink 模块支持心跳和解锁／锁定联动。飞行仿真可单独在 PX4 源码目录中，按 [PX4 v1.16 开发环境](https://docs.px4.io/v1.16/en/dev_setup/dev_env_linux_ubuntu)完成工具链安装后运行 `make px4_sitl gz_x500`。该命令使用 PX4 的 X500 示例及新版 Gazebo，地面工作空间的 `mapping_sim.sh` 和 `nav2_sim.sh` 使用 Gazebo Classic。[PX4 v1.16.0 发布页](https://github.com/PX4/PX4-Autopilot/releases/tag/v1.16.0)
-
-双光巡检方案包含可见光与热成像采集、图像对齐、温度阈值告警和证据保存。相机驱动、标定文件与运行节点需单独配齐。[热斑检测流程](底盘控制代码/docs/光伏热斑检测系统流程图.md)
 
 ## 开源项目与依赖
 
@@ -164,7 +226,8 @@ ros2 topic echo /cmd_vel
 | [Ikunio/Lidar_nav2_ws](https://github.com/Ikunio/Lidar_nav2_ws) | 地面建图和导航工作空间基础 |
 | [ROS 2](https://github.com/ros2/ros2)、[Nav2](https://github.com/ros-navigation/navigation2)、[SLAM Toolbox](https://github.com/SteveMacenski/slam_toolbox)、[pointcloud_to_laserscan](https://github.com/ros-perception/pointcloud_to_laserscan) | 节点通信、二维地图、导航与点云转二维激光扫描 |
 | [Livox ROS Driver 2](https://github.com/Livox-SDK/livox_ros_driver2)、[Livox SDK2](https://github.com/Livox-SDK/Livox-SDK2) | MID-360 点云和 IMU 接入 |
-| [FAST-LIO](https://github.com/hku-mars/FAST_LIO)、[Point-LIO](https://github.com/hku-mars/Point-LIO) | 激光惯性里程计。现有脚本默认使用 FAST-LIO，Point-LIO 为备选 |
+| [FAST-LIO](https://github.com/hku-mars/FAST_LIO)、[FAST-LIO ROS 2 移植](https://github.com/Ericsii/FAST_LIO_ROS2)、[Point-LIO](https://github.com/hku-mars/Point-LIO) | 激光惯性里程计与三维点云建图。导航脚本默认使用 FAST-LIO，Point-LIO 为备选 |
+| [libuvc](https://github.com/libuvc/libuvc)、[libusb](https://libusb.info/)、[NumPy](https://numpy.org/)、[SciPy](https://scipy.org/)、[GStreamer](https://gstreamer.freedesktop.org/) | 红外 UVC 采集、温度矩阵运算、可选中值滤波和 Jetson CSI 视频接入 |
 | [KISS-Matcher](https://github.com/MIT-SPARK/KISS-Matcher)、[ROBIN](https://github.com/MIT-SPARK/ROBIN)、[small_gicp](https://github.com/koide3/small_gicp) | 全局点云重定位、异常匹配剔除和局部配准 |
 | [PCL](https://pointclouds.org/)、[Eigen](https://eigen.tuxfamily.org/)、[Sophus](https://github.com/strasdat/Sophus)、[GTSAM](https://github.com/borglab/gtsam)、[OpenCV](https://opencv.org/)、[oneTBB](https://github.com/uxlfoundation/oneTBB) | 点云处理、线性代数、李群运算、图优化、图像处理和并行计算 |
 | [Gazebo Classic](https://classic.gazebosim.org/)、[gazebo_ros_pkgs](https://github.com/ros-simulation/gazebo_ros_pkgs) | 地面仿真与 ROS 2 接口 |
@@ -173,4 +236,4 @@ ros2 topic echo /cmd_vel
 
 ## 许可证
 
-本项目自行编写的代码、文档及原创模型按 [MIT License](LICENSE) 发布。第三方源码、二进制、模型和资源沿用各自上游许可及版权声明。例：[导航工作空间 MIT 声明](上位机代码/Lidar_nav2_ws/LICENSE)、[FAST-LIO 的 GPL 许可](上位机代码/Lidar_nav2_ws/src/localization/FAST_LIO/LICENSE)、[Livox 驱动许可](上位机代码/Lidar_nav2_ws/src/livox_ros_driver2/LICENSE.txt)和[原模型许可](模型/LICENSE)。再分发第三方内容时请保留对应的许可与版权声明。
+本项目自行编写的代码、文档及原创模型按 [MIT License](LICENSE) 发布。第三方源码、二进制、模型和资源沿用各自上游许可及版权声明。两份 FAST-LIO 源码目录都附有 GPL 许可文件，分别见[独立建图包](FAST_LIO2_source/LICENSE)和[导航工作空间版本](上位机代码/Lidar_nav2_ws/src/localization/FAST_LIO/LICENSE)。其他声明见[导航工作空间](上位机代码/Lidar_nav2_ws/LICENSE)、[Livox 驱动](上位机代码/Lidar_nav2_ws/src/livox_ros_driver2/LICENSE.txt)和[原模型](模型/LICENSE)。再分发第三方内容时请保留对应的许可与版权声明。
